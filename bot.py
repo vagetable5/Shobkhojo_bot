@@ -8,8 +8,18 @@ from pyrogram.handlers import MessageHandler
 logging.basicConfig(level=logging.INFO)
 
 E = os.environ
-LOG = E["LOG_CHANNEL"]
-LOG = int(LOG) if LOG.lstrip("-").isdigit() else LOG
+def norm(v):
+    v = v.strip()
+    if "t.me/" in v:
+        p = v.split("t.me/")[1].split("?")[0].strip("/").split("/")
+        if p[0] == "c" and len(p) > 1: return int("-100" + p[1])   # t.me/c/123/45 -> -100123
+        if p[0].startswith("+") or p[0] == "joinchat":
+            raise SystemExit("LOG_CHANNEL এ invite লিংক চলবে না। -100... আইডি বা @ইউজারনেম দিন")
+        return "@" + p[0].lstrip("@")
+    if v.lstrip("-").isdigit(): return int(v)
+    return v if v.startswith("@") else "@" + v
+
+LOG = norm(E["LOG_CHANNEL"])
 HOURS = float(E.get("HOURS", "3"))
 
 # Supabase ঐচ্ছিক: না দিলে অটো-ডিলিট মেমোরিতে চলবে (বট রিস্টার্ট হলে হারাবে)
