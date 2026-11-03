@@ -28,7 +28,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 load_dotenv()
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHANNEL_ID = int(os.environ["CHANNEL_ID"])
+CHANNEL_ID = os.environ["CHANNEL_ID"]
 ADMIN_ID = int(os.environ["ADMIN_TELEGRAM_ID"])
 SITE = os.environ.get("SITE_URL", "https://shobkhojo.netlify.app").rstrip("/")
 PROTECT = os.environ.get("PROTECT_CONTENT", "1") == "1"
