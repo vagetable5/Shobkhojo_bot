@@ -159,7 +159,7 @@ def start_health_server():
 
 
 def main():
-        asyncio.set_event_loop(asyncio.new_event_loop())
+    asyncio.set_event_loop(asyncio.new_event_loop())
     logging.basicConfig(format="%(asctime)s %(levelname)s %(message)s", level=logging.INFO)
     start_health_server()
     app = Application.builder().token(BOT_TOKEN).build()
