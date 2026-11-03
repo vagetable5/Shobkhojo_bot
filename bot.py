@@ -1,4 +1,4 @@
-import os, asyncio, aiohttp, logging
+import os, asyncio, aiohttp, logging, time
 from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from pyrogram import Client, filters
@@ -7,11 +7,17 @@ from pyrogram.handlers import MessageHandler
 logging.basicConfig(level=logging.INFO)
 
 E = os.environ
-SB = E["SUPABASE_URL"] + "/rest/v1"
-H = {"apikey": E["SERVICE_KEY"], "Content-Type": "application/json"}
 LOG = E["LOG_CHANNEL"]
-ADMIN = int(E["ADMIN_ID"])
-HOURS = 3
+LOG = int(LOG) if LOG.lstrip("-").isdigit() else LOG
+HOURS = float(E.get("HOURS", "3"))
+
+# Supabase ঐচ্ছিক: না দিলে অটো-ডিলিট মেমোরিতে চলবে (বট রিস্টার্ট হলে হারাবে)
+SBU = E.get("SUPABASE_URL")
+SBK = E.get("SERVICE_KEY")
+SB = SBU + "/rest/v1" if SBU else None
+H = {"apikey": SBK, "Content-Type": "application/json"} if SBK else None
+USE_DB = bool(SB and H)
+MEM = []
 app = None
 
 def ts(dt): return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -22,31 +28,29 @@ async def get(path):
             return await r.json()
 
 async def schedule(chat, *ids):
-    t = ts(datetime.now(timezone.utc) + timedelta(hours=HOURS))
+    when = datetime.now(timezone.utc) + timedelta(hours=HOURS)
+    if not USE_DB:
+        MEM.extend((when.timestamp(), chat, i) for i in ids)
+        return
     async with aiohttp.ClientSession() as s:
-        await s.post(SB + "/bot_deletes", headers=H, json=[{"chat_id": chat, "message_id": i, "delete_at": t} for i in ids])
+        await s.post(SB + "/bot_deletes", headers=H,
+                     json=[{"chat_id": chat, "message_id": i, "delete_at": ts(when)} for i in ids])
 
 async def start(c, m):
     print("START PELAM:", m.text, flush=True)
     try:
-        if len(m.command) < 2 or not m.command[1].startswith("video_"):
-            return await m.reply("🔥 Viral Video বটে স্বাগতম! ওয়েবসাইট থেকে ভিডিও লিংকে ক্লিক করুন।")
-        mid = int(m.command[1][6:])
-        r = await get(f"/post_links?tg_msg_id=eq.{mid}&select=posts(type)")
-        print("DB REPLY:", r, flush=True)
-        if not r or not isinstance(r, list):
+        if len(m.command) < 2:
+            return await m.reply("🔥 স্বাগতম! ওয়েবসাইট থেকে ভিডিও লিংকে ক্লিক করুন।")
+        p = m.command[1]
+        p = p[6:] if p.startswith("video_") else p   # start=45 বা start=video_45 দুটোই চলবে
+        if not p.isdigit():
             return await m.reply("❌ ভিডিও পাওয়া যায়নি।")
-        if r[0]["posts"]["type"] == "premium":
-            u = m.from_user.username or "-"
-            ok = await get(f"/profiles?tg_username=ilike.{u}&status=eq.approved&select=id")
-            if not ok or not isinstance(ok, list):
-                return await m.reply("🔒 প্রিমিয়াম! ওয়েবসাইটে রেজিস্ট্রেশনের সময় এই Telegram username দিন এবং অ্যাডমিনের অনুমোদন নিন।")
-        v = await c.copy_message(m.chat.id, LOG, mid, protect_content=True)
-        n = await m.reply(f"⏳ এই ভিডিও {HOURS} ঘণ্টা পর অটো ডিলিট হয়ে যাবে। আবার দেখতে হলে ওয়েবসাইট থেকে আসুন।")
+        v = await c.copy_message(m.chat.id, LOG, int(p), protect_content=True)
+        n = await m.reply(f"⏳ এই ভিডিও {HOURS:g} ঘণ্টা পর অটো ডিলিট হয়ে যাবে। আবার দেখতে হলে ওয়েবসাইট থেকে আসুন।")
         await schedule(m.chat.id, v.id, n.id, m.id)
     except Exception as e:
         print("START ERROR:", repr(e), flush=True)
-        try: await m.reply("⚠️ এরর: " + str(e)[:200])
+        try: await m.reply("⚠️ ভিডিওটি পাওয়া যায়নি বা সরানো হয়েছে।")
         except Exception as e2: print("REPLY ERROR:", repr(e2), flush=True)
 
 async def anymsg(c, m):
@@ -55,24 +59,22 @@ async def anymsg(c, m):
 async def sweeper():
     while True:
         try:
-            now = ts(datetime.now(timezone.utc))
-            for d in await get(f"/bot_deletes?delete_at=lt.{now}&select=id,chat_id,message_id"):
-                try: await app.delete_messages(d["chat_id"], d["message_id"])
-                except Exception as e: print(e)
-                async with aiohttp.ClientSession() as s:
-                    await s.delete(SB + f"/bot_deletes?id=eq.{d['id']}", headers=H)
+            if USE_DB:
+                now = ts(datetime.now(timezone.utc))
+                for d in await get(f"/bot_deletes?delete_at=lt.{now}&select=id,chat_id,message_id"):
+                    try: await app.delete_messages(d["chat_id"], d["message_id"])
+                    except Exception as e: print(e)
+                    async with aiohttp.ClientSession() as s:
+                        await s.delete(SB + f"/bot_deletes?id=eq.{d['id']}", headers=H)
+            else:
+                now = time.time()
+                due = [x for x in MEM if x[0] < now]
+                for x in due:
+                    MEM.remove(x)
+                    try: await app.delete_messages(x[1], x[2])
+                    except Exception as e: print(e)
         except Exception as e: print(e)
         await asyncio.sleep(60)
-
-async def notify():
-    while True:
-        try:
-            for u in await get("/profiles?notified=eq.false&select=id,email,tg_username"):
-                await app.send_message(ADMIN, f"🆕 নতুন ইউজার: {u['email']} @{u['tg_username']}")
-                async with aiohttp.ClientSession() as s:
-                    await s.patch(SB + f"/profiles?id=eq.{u['id']}", headers=H, json={"notified": True})
-        except Exception as e: print(e)
-        await asyncio.sleep(30)
 
 async def main():
     global app
@@ -82,7 +84,7 @@ async def main():
     await app.start()
     me = await app.get_me()
     print("BOT CHALU:", me.username, flush=True)
-    asyncio.create_task(notify()); asyncio.create_task(sweeper())
+    asyncio.create_task(sweeper())
     w = web.Application(); w.router.add_get("/", lambda r: web.Response(text="ok"))
     rn = web.AppRunner(w); await rn.setup()
     await web.TCPSite(rn, "0.0.0.0", int(E.get("PORT", 10000))).start()
