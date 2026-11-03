@@ -1,4 +1,5 @@
 import os, asyncio, aiohttp, logging, time
+loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop)  # নতুন পাইথনে pyrogram import এর আগে লুপ লাগে
 from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from pyrogram import Client, filters
@@ -90,4 +91,4 @@ async def main():
     await web.TCPSite(rn, "0.0.0.0", int(E.get("PORT", 10000))).start()
     await asyncio.Event().wait()
 
-asyncio.run(main())
+loop.run_until_complete(main())
