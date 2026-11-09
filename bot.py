@@ -12,6 +12,10 @@ survive Render restarts.
 Environment variables (set them in Render > Environment):
   BOT_TOKEN, CHANNEL_ID, ADMIN_TELEGRAM_ID, SUPABASE_URL, SUPABASE_SERVICE_KEY
   optional: SITE_URL, PROTECT_CONTENT (default 1), AUTO_DELETE_MINUTES (default 300)
+
+CHANNEL_ID works for both kinds of channel:
+  private channel -> numeric id, e.g. -1001234567890
+  public channel  -> @username
 """
 import asyncio
 import logging
@@ -28,7 +32,9 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 load_dotenv()
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHANNEL_ID = os.environ["CHANNEL_ID"]
+_raw_channel = os.environ["CHANNEL_ID"].strip()
+# private channel id must be an int; a public channel stays as "@username"
+CHANNEL_ID = int(_raw_channel) if re.fullmatch(r"-?\d+", _raw_channel) else _raw_channel
 ADMIN_ID = int(os.environ["ADMIN_TELEGRAM_ID"])
 SITE = os.environ.get("SITE_URL", "https://shobkhojo.netlify.app").rstrip("/")
 PROTECT = os.environ.get("PROTECT_CONTENT", "1") == "1"
@@ -165,8 +171,12 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("series", series, filters=filters.User(user_id=ADMIN_ID)))
+    if isinstance(CHANNEL_ID, int):
+        chat_filter = filters.Chat(chat_id=CHANNEL_ID)
+    else:
+        chat_filter = filters.Chat(username=CHANNEL_ID.lstrip("@"))
     app.add_handler(MessageHandler(
-        filters.UpdateType.CHANNEL_POST & filters.Chat(CHANNEL_ID)
+        filters.UpdateType.CHANNEL_POST & chat_filter
         & (filters.VIDEO | filters.Document.ALL | filters.AUDIO), on_channel_post))
     if AUTO_DELETE:
         app.job_queue.run_repeating(run_deletions, interval=60, first=30)
